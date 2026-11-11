@@ -259,6 +259,17 @@ constexpr auto kPreviewPostsLimit = 3;
 	Unexpected("Chat type filter in search results.");
 }
 
+[[nodiscard]] IndexedList *TabbedThreadsList(not_null<History*> history) {
+	if (!HistoryView::SubsectionTabs::UsedFor(history)) {
+		return nullptr;
+	} else if (const auto forum = history->peer->forum()) {
+		return forum->topicsList()->indexed();
+	} else if (const auto monoforum = history->peer->monoforum()) {
+		return monoforum->chatsList()->indexed();
+	}
+	return nullptr;
+}
+
 } // namespace
 
 struct InnerWidget::CollapsedRow {
@@ -6058,6 +6069,18 @@ RowDescriptor InnerWidget::chatListEntryBefore(
 		return RowDescriptor();
 	}
 	if (_state == WidgetState::Default) {
+		const auto thread = which.key.thread();
+		const auto history = thread ? thread->owningHistory().get() : nullptr;
+		const auto tabs = (history && thread != history)
+			? TabbedThreadsList(history)
+			: nullptr;
+		if (tabs) {
+			const auto row = tabs->getRow(which.key);
+			const auto i = row ? tabs->cfind(row) : tabs->cbegin();
+			return RowDescriptor(
+				(i != tabs->cbegin()) ? (*(i - 1))->key() : Key(history),
+				FullMsgId(PeerId(), ShowAtUnreadMsgId));
+		}
 		if (const auto row = _shownList->getRow(which.key)) {
 			const auto i = _shownList->cfind(row);
 			if (i != _shownList->cbegin()) {
@@ -6136,7 +6159,23 @@ RowDescriptor InnerWidget::chatListEntryAfter(
 		return RowDescriptor();
 	}
 	if (_state == WidgetState::Default) {
-		if (const auto row = _shownList->getRow(which.key)) {
+		auto key = which.key;
+		const auto thread = key.thread();
+		const auto history = thread ? thread->owningHistory().get() : nullptr;
+		if (const auto tabs = history ? TabbedThreadsList(history) : nullptr) {
+			auto i = tabs->cbegin();
+			if (thread != history) {
+				const auto row = tabs->getRow(key);
+				i = row ? (tabs->cfind(row) + 1) : tabs->cend();
+			}
+			if (i != tabs->cend()) {
+				return RowDescriptor(
+					(*i)->key(),
+					FullMsgId(PeerId(), ShowAtUnreadMsgId));
+			}
+			key = history;
+		}
+		if (const auto row = _shownList->getRow(key)) {
 			const auto i = _shownList->cfind(row) + 1;
 			if (i != _shownList->cend()) {
 				return RowDescriptor(
