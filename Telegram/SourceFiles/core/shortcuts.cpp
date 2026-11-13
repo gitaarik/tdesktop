@@ -54,6 +54,8 @@ const auto AutoRepeatCommands = base::flat_set<Command>{
 	Command::ChatNext,
 	Command::ChatFirst,
 	Command::ChatLast,
+	Command::ThreadPrevious,
+	Command::ThreadNext,
 };
 
 const auto MediaCommands = base::flat_set<Command>{
@@ -95,6 +97,8 @@ const auto CommandByName = base::flat_map<QString, Command>{
 	{ u"first_chat"_q                    , Command::ChatFirst },
 	{ u"last_chat"_q                     , Command::ChatLast },
 	{ u"self_chat"_q                     , Command::ChatSelf },
+	{ u"previous_thread"_q               , Command::ThreadPrevious },
+	{ u"next_thread"_q                   , Command::ThreadNext },
 	{ u"pinned_chat1"_q                  , Command::ChatPinned1 },
 	{ u"pinned_chat2"_q                  , Command::ChatPinned2 },
 	{ u"pinned_chat3"_q                  , Command::ChatPinned3 },

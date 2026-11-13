@@ -266,6 +266,35 @@ constexpr auto kPreviewPostsLimit = 3;
 		: key;
 }
 
+[[nodiscard]] Key AdjacentThreadTab(Key key, bool next) {
+	const auto thread = key.thread();
+	if (!thread || !HistoryView::SubsectionTabs::UsedFor(thread)) {
+		return Key();
+	}
+	const auto history = thread->owningHistory().get();
+	const auto forum = history->peer->forum();
+	const auto monoforum = history->peer->monoforum();
+	const auto list = forum
+		? forum->topicsList()->indexed().get()
+		: monoforum
+		? monoforum->chatsList()->indexed().get()
+		: nullptr;
+	if (!list) {
+		return Key();
+	} else if (thread == history) {
+		return (next && !list->empty()) ? (*list->cbegin())->key() : Key();
+	}
+	const auto row = list->getRow(key);
+	if (!row) {
+		return next ? Key() : Key(history);
+	}
+	const auto i = list->cfind(row);
+	if (next) {
+		return (i + 1 != list->cend()) ? (*(i + 1))->key() : Key();
+	}
+	return (i != list->cbegin()) ? (*(i - 1))->key() : Key(history);
+}
+
 } // namespace
 
 struct InnerWidget::CollapsedRow {
@@ -6513,6 +6542,8 @@ void InnerWidget::setupShortcuts() {
 			const auto jump = computeJump(to, JumpSkip::PreviousOrOriginal);
 			return (to == row || jump == row || to == next) ? to : jump;
 		}();
+		const auto previousThread = AdjacentThreadTab(row.key, false);
+		const auto nextThread = AdjacentThreadTab(row.key, true);
 		if (row.key) {
 			request->check(Command::ChatPrevious) && request->handle([=] {
 				return jumpToDialogRow(previous);
@@ -6525,6 +6556,20 @@ void InnerWidget::setupShortcuts() {
 			: !_filterResults.empty()) {
 			request->check(Command::ChatNext) && request->handle([=] {
 				return jumpToDialogRow(first);
+			});
+		}
+		if (previousThread) {
+			request->check(Command::ThreadPrevious) && request->handle([=] {
+				return jumpToDialogRow(RowDescriptor(
+					previousThread,
+					FullMsgId(PeerId(), ShowAtUnreadMsgId)));
+			});
+		}
+		if (nextThread) {
+			request->check(Command::ThreadNext) && request->handle([=] {
+				return jumpToDialogRow(RowDescriptor(
+					nextThread,
+					FullMsgId(PeerId(), ShowAtUnreadMsgId)));
 			});
 		}
 		request->check(Command::ChatFirst) && request->handle([=] {
