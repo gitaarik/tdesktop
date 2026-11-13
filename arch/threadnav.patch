@@ -1,0 +1,146 @@
+diff --git a/Telegram/Resources/langs/lang.strings b/Telegram/Resources/langs/lang.strings
+index ea85716e3..d85613947 100644
+--- a/Telegram/Resources/langs/lang.strings
++++ b/Telegram/Resources/langs/lang.strings
+@@ -760,6 +760,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+ "lng_shortcuts_chat_first" = "First chat";
+ "lng_shortcuts_chat_last" = "Last chat";
+ "lng_shortcuts_chat_self" = "Saved Messages";
++"lng_shortcuts_thread_previous" = "Previous thread";
++"lng_shortcuts_thread_next" = "Next thread";
+ "lng_shortcuts_chat_pinned_n" = "Pinned chat #{index}";
+ "lng_shortcuts_show_account_n" = "Account #{index}";
+ "lng_shortcuts_show_all_chats" = "All Chats folder";
+diff --git a/Telegram/SourceFiles/core/shortcuts.cpp b/Telegram/SourceFiles/core/shortcuts.cpp
+index c3b090faa..d89032e8a 100644
+--- a/Telegram/SourceFiles/core/shortcuts.cpp
++++ b/Telegram/SourceFiles/core/shortcuts.cpp
+@@ -54,6 +54,8 @@ const auto AutoRepeatCommands = base::flat_set<Command>{
+ 	Command::ChatNext,
+ 	Command::ChatFirst,
+ 	Command::ChatLast,
++	Command::ThreadPrevious,
++	Command::ThreadNext,
+ };
+ 
+ const auto MediaCommands = base::flat_set<Command>{
+@@ -95,6 +97,8 @@ const auto CommandByName = base::flat_map<QString, Command>{
+ 	{ u"first_chat"_q                    , Command::ChatFirst },
+ 	{ u"last_chat"_q                     , Command::ChatLast },
+ 	{ u"self_chat"_q                     , Command::ChatSelf },
++	{ u"previous_thread"_q               , Command::ThreadPrevious },
++	{ u"next_thread"_q                   , Command::ThreadNext },
+ 	{ u"pinned_chat1"_q                  , Command::ChatPinned1 },
+ 	{ u"pinned_chat2"_q                  , Command::ChatPinned2 },
+ 	{ u"pinned_chat3"_q                  , Command::ChatPinned3 },
+diff --git a/Telegram/SourceFiles/core/shortcuts.h b/Telegram/SourceFiles/core/shortcuts.h
+index e48ef83f7..5e0abfb7a 100644
+--- a/Telegram/SourceFiles/core/shortcuts.h
++++ b/Telegram/SourceFiles/core/shortcuts.h
+@@ -36,6 +36,8 @@ enum class Command {
+ 	ChatFirst,
+ 	ChatLast,
+ 	ChatSelf,
++	ThreadPrevious,
++	ThreadNext,
+ 	ChatPinned1,
+ 	ChatPinned2,
+ 	ChatPinned3,
+diff --git a/Telegram/SourceFiles/dialogs/dialogs_inner_widget.cpp b/Telegram/SourceFiles/dialogs/dialogs_inner_widget.cpp
+index 280aa620d..ae7bbe050 100644
+--- a/Telegram/SourceFiles/dialogs/dialogs_inner_widget.cpp
++++ b/Telegram/SourceFiles/dialogs/dialogs_inner_widget.cpp
+@@ -259,6 +259,42 @@ constexpr auto kPreviewPostsLimit = 3;
+ 	Unexpected("Chat type filter in search results.");
+ }
+ 
++[[nodiscard]] Key ChatListKey(Key key) {
++	const auto thread = key.thread();
++	return (thread && HistoryView::SubsectionTabs::UsedFor(thread))
++		? Key(thread->owningHistory())
++		: key;
++}
++
++[[nodiscard]] Key AdjacentThreadTab(Key key, bool next) {
++	const auto thread = key.thread();
++	if (!thread || !HistoryView::SubsectionTabs::UsedFor(thread)) {
++		return Key();
++	}
++	const auto history = thread->owningHistory().get();
++	const auto forum = history->peer->forum();
++	const auto monoforum = history->peer->monoforum();
++	const auto list = forum
++		? forum->topicsList()->indexed().get()
++		: monoforum
++		? monoforum->chatsList()->indexed().get()
++		: nullptr;
++	if (!list) {
++		return Key();
++	} else if (thread == history) {
++		return (next && !list->empty()) ? (*list->cbegin())->key() : Key();
++	}
++	const auto row = list->getRow(key);
++	if (!row) {
++		return next ? Key() : Key(history);
++	}
++	const auto i = list->cfind(row);
++	if (next) {
++		return (i + 1 != list->cend()) ? (*(i + 1))->key() : Key();
++	}
++	return (i != list->cbegin()) ? (*(i - 1))->key() : Key(history);
++}
++
+ } // namespace
+ 
+ struct InnerWidget::CollapsedRow {
+@@ -6058,7 +6094,7 @@ RowDescriptor InnerWidget::chatListEntryBefore(
+ 		return RowDescriptor();
+ 	}
+ 	if (_state == WidgetState::Default) {
+-		if (const auto row = _shownList->getRow(which.key)) {
++		if (const auto row = _shownList->getRow(ChatListKey(which.key))) {
+ 			const auto i = _shownList->cfind(row);
+ 			if (i != _shownList->cbegin()) {
+ 				return RowDescriptor(
+@@ -6136,7 +6172,7 @@ RowDescriptor InnerWidget::chatListEntryAfter(
+ 		return RowDescriptor();
+ 	}
+ 	if (_state == WidgetState::Default) {
+-		if (const auto row = _shownList->getRow(which.key)) {
++		if (const auto row = _shownList->getRow(ChatListKey(which.key))) {
+ 			const auto i = _shownList->cfind(row) + 1;
+ 			if (i != _shownList->cend()) {
+ 				return RowDescriptor(
+@@ -6407,6 +6443,19 @@ void InnerWidget::setupShortcuts() {
+ 				return jumpToDialogRow(first);
+ 			});
+ 		}
++		for (const auto next : { false, true }) {
++			const auto command = next
++				? Command::ThreadNext
++				: Command::ThreadPrevious;
++			if (const auto key = AdjacentThreadTab(row.key, next)) {
++				request->check(command) && request->handle([=] {
++					return _controller->jumpToChatListEntry({
++						key,
++						FullMsgId(PeerId(), ShowAtUnreadMsgId),
++					});
++				});
++			}
++		}
+ 		request->check(Command::ChatFirst) && request->handle([=] {
+ 			return jumpToDialogRow(first);
+ 		});
+diff --git a/Telegram/SourceFiles/settings/sections/settings_shortcuts.cpp b/Telegram/SourceFiles/settings/sections/settings_shortcuts.cpp
+index e742f70ec..c4b8b7414 100644
+--- a/Telegram/SourceFiles/settings/sections/settings_shortcuts.cpp
++++ b/Telegram/SourceFiles/settings/sections/settings_shortcuts.cpp
+@@ -73,6 +73,8 @@ struct Labeled {
+ 		{ C::ChatFirst, tr::lng_shortcuts_chat_first() },
+ 		{ C::ChatLast, tr::lng_shortcuts_chat_last() },
+ 		{ C::ChatSelf, tr::lng_shortcuts_chat_self() },
++		{ C::ThreadPrevious, tr::lng_shortcuts_thread_previous() },
++		{ C::ThreadNext, tr::lng_shortcuts_thread_next() },
+ 		separator,
+ 		{ C::ChatPinned1, pinned(1) },
+ 		{ C::ChatPinned2, pinned(2) },

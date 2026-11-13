@@ -1,0 +1,32 @@
+# Builds arch/PKGBUILD into a pacman package. Lives on the fork's
+# arch-package branch, which scripts/build-arch.sh fills from arch/ in
+# ~/dev/telegram-desktop; edit it there, not on the branch.
+name: Arch package
+
+on:
+  push:
+    branches: [arch-package]
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free up disk space.
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6
+        with:
+          tool-cache: true
+
+      - name: Build the package.
+        run: |
+          docker run --rm -v "$PWD/arch:/build" -w /build archlinux:base-devel \
+            bash ./ci-build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: arch/*.pkg.tar.zst
+          retention-days: 7
