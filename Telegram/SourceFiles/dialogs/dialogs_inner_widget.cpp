@@ -259,6 +259,13 @@ constexpr auto kPreviewPostsLimit = 3;
 	Unexpected("Chat type filter in search results.");
 }
 
+[[nodiscard]] Key ChatListRowKey(Key key) {
+	const auto thread = key.thread();
+	return (thread && HistoryView::SubsectionTabs::UsedFor(thread))
+		? Key(thread->owningHistory())
+		: key;
+}
+
 } // namespace
 
 struct InnerWidget::CollapsedRow {
@@ -6171,7 +6178,7 @@ RowDescriptor InnerWidget::chatListEntryBefore(
 		return RowDescriptor();
 	}
 	if (_state == WidgetState::Default) {
-		if (const auto row = _shownList->getRow(which.key)) {
+		if (const auto row = _shownList->getRow(ChatListRowKey(which.key))) {
 			const auto i = _shownList->cfind(row);
 			if (i != _shownList->cbegin()) {
 				return RowDescriptor(
@@ -6249,7 +6256,7 @@ RowDescriptor InnerWidget::chatListEntryAfter(
 		return RowDescriptor();
 	}
 	if (_state == WidgetState::Default) {
-		if (const auto row = _shownList->getRow(which.key)) {
+		if (const auto row = _shownList->getRow(ChatListRowKey(which.key))) {
 			const auto i = _shownList->cfind(row) + 1;
 			if (i != _shownList->cend()) {
 				return RowDescriptor(
