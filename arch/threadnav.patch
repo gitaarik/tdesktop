@@ -1,5 +1,5 @@
 diff --git a/Telegram/Resources/langs/lang.strings b/Telegram/Resources/langs/lang.strings
-index ea85716e3..d85613947 100644
+index d61c09cef..aae761620 100644
 --- a/Telegram/Resources/langs/lang.strings
 +++ b/Telegram/Resources/langs/lang.strings
 @@ -760,6 +760,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
@@ -11,6 +11,25 @@ index ea85716e3..d85613947 100644
  "lng_shortcuts_chat_pinned_n" = "Pinned chat #{index}";
  "lng_shortcuts_show_account_n" = "Account #{index}";
  "lng_shortcuts_show_all_chats" = "All Chats folder";
+diff --git a/Telegram/SourceFiles/boxes/keys_legend.cpp b/Telegram/SourceFiles/boxes/keys_legend.cpp
+index d3cd9a86d..41ae80a54 100644
+--- a/Telegram/SourceFiles/boxes/keys_legend.cpp
++++ b/Telegram/SourceFiles/boxes/keys_legend.cpp
+@@ -201,6 +201,14 @@ using KeysMap = base::flat_map<QKeySequence, base::flat_set<Command>>;
+ 				caps(Command::ChatNext),
+ 				tr::lng_shortcuts_chat_next(tr::now),
+ 			},
++			{
++				caps(Command::ThreadPrevious),
++				tr::lng_shortcuts_thread_previous(tr::now),
++			},
++			{
++				caps(Command::ThreadNext),
++				tr::lng_shortcuts_thread_next(tr::now),
++			},
+ 			{
+ 				GroupCaps(currents, {
+ 					Command::ChatPinned1,
 diff --git a/Telegram/SourceFiles/core/shortcuts.cpp b/Telegram/SourceFiles/core/shortcuts.cpp
 index c3b090faa..d89032e8a 100644
 --- a/Telegram/SourceFiles/core/shortcuts.cpp
@@ -47,14 +66,14 @@ index e48ef83f7..5e0abfb7a 100644
  	ChatPinned2,
  	ChatPinned3,
 diff --git a/Telegram/SourceFiles/dialogs/dialogs_inner_widget.cpp b/Telegram/SourceFiles/dialogs/dialogs_inner_widget.cpp
-index 280aa620d..ae7bbe050 100644
+index 12006cfdb..8d94fe65d 100644
 --- a/Telegram/SourceFiles/dialogs/dialogs_inner_widget.cpp
 +++ b/Telegram/SourceFiles/dialogs/dialogs_inner_widget.cpp
-@@ -259,6 +259,42 @@ constexpr auto kPreviewPostsLimit = 3;
+@@ -259,6 +259,58 @@ constexpr auto kPreviewPostsLimit = 3;
  	Unexpected("Chat type filter in search results.");
  }
  
-+[[nodiscard]] Key ChatListKey(Key key) {
++[[nodiscard]] Key ChatListRowKey(Key key) {
 +	const auto thread = key.thread();
 +	return (thread && HistoryView::SubsectionTabs::UsedFor(thread))
 +		? Key(thread->owningHistory())
@@ -90,47 +109,90 @@ index 280aa620d..ae7bbe050 100644
 +	return (i != list->cbegin()) ? (*(i - 1))->key() : Key(history);
 +}
 +
++[[nodiscard]] RowDescriptor WithActiveTab(RowDescriptor row) {
++	const auto history = row.key.history();
++	if (!history
++		|| row.fullId.msg != ShowAtUnreadMsgId
++		|| !history->peer->useSubsectionTabs()) {
++		return row;
++	}
++	const auto peer = history->peer;
++	const auto active = peer->forum()
++		? peer->forum()->activeSubsectionThread()
++		: peer->monoforum()
++		? peer->monoforum()->activeSubsectionThread()
++		: nullptr;
++	return active ? RowDescriptor(active, row.fullId) : row;
++}
++
  } // namespace
  
  struct InnerWidget::CollapsedRow {
-@@ -6058,7 +6094,7 @@ RowDescriptor InnerWidget::chatListEntryBefore(
+@@ -6171,7 +6223,7 @@ RowDescriptor InnerWidget::chatListEntryBefore(
  		return RowDescriptor();
  	}
  	if (_state == WidgetState::Default) {
 -		if (const auto row = _shownList->getRow(which.key)) {
-+		if (const auto row = _shownList->getRow(ChatListKey(which.key))) {
++		if (const auto row = _shownList->getRow(ChatListRowKey(which.key))) {
  			const auto i = _shownList->cfind(row);
  			if (i != _shownList->cbegin()) {
  				return RowDescriptor(
-@@ -6136,7 +6172,7 @@ RowDescriptor InnerWidget::chatListEntryAfter(
+@@ -6249,7 +6301,7 @@ RowDescriptor InnerWidget::chatListEntryAfter(
  		return RowDescriptor();
  	}
  	if (_state == WidgetState::Default) {
 -		if (const auto row = _shownList->getRow(which.key)) {
-+		if (const auto row = _shownList->getRow(ChatListKey(which.key))) {
++		if (const auto row = _shownList->getRow(ChatListRowKey(which.key))) {
  			const auto i = _shownList->cfind(row) + 1;
  			if (i != _shownList->cend()) {
  				return RowDescriptor(
-@@ -6407,6 +6443,19 @@ void InnerWidget::setupShortcuts() {
- 				return jumpToDialogRow(first);
+@@ -6506,25 +6558,41 @@ void InnerWidget::setupShortcuts() {
+ 			const auto jump = computeJump(to, JumpSkip::PreviousOrOriginal);
+ 			return (to == row || jump == row || to == next) ? to : jump;
+ 		}();
++		const auto previousThread = AdjacentThreadTab(row.key, false);
++		const auto nextThread = AdjacentThreadTab(row.key, true);
+ 		if (row.key) {
+ 			request->check(Command::ChatPrevious) && request->handle([=] {
+-				return jumpToDialogRow(previous);
++				return jumpToDialogRow(WithActiveTab(previous));
+ 			});
+ 			request->check(Command::ChatNext) && request->handle([=] {
+-				return jumpToDialogRow(next);
++				return jumpToDialogRow(WithActiveTab(next));
+ 			});
+ 		} else if (_state == WidgetState::Default
+ 			? !_shownList->empty()
+ 			: !_filterResults.empty()) {
+ 			request->check(Command::ChatNext) && request->handle([=] {
+-				return jumpToDialogRow(first);
++				return jumpToDialogRow(WithActiveTab(first));
++			});
++		}
++		if (previousThread) {
++			request->check(Command::ThreadPrevious) && request->handle([=] {
++				return jumpToDialogRow(RowDescriptor(
++					previousThread,
++					FullMsgId(PeerId(), ShowAtUnreadMsgId)));
++			});
++		}
++		if (nextThread) {
++			request->check(Command::ThreadNext) && request->handle([=] {
++				return jumpToDialogRow(RowDescriptor(
++					nextThread,
++					FullMsgId(PeerId(), ShowAtUnreadMsgId)));
  			});
  		}
-+		for (const auto next : { false, true }) {
-+			const auto command = next
-+				? Command::ThreadNext
-+				: Command::ThreadPrevious;
-+			if (const auto key = AdjacentThreadTab(row.key, next)) {
-+				request->check(command) && request->handle([=] {
-+					return _controller->jumpToChatListEntry({
-+						key,
-+						FullMsgId(PeerId(), ShowAtUnreadMsgId),
-+					});
-+				});
-+			}
-+		}
  		request->check(Command::ChatFirst) && request->handle([=] {
- 			return jumpToDialogRow(first);
+-			return jumpToDialogRow(first);
++			return jumpToDialogRow(WithActiveTab(first));
  		});
+ 		request->check(Command::ChatLast) && request->handle([=] {
+-			return jumpToDialogRow(last);
++			return jumpToDialogRow(WithActiveTab(last));
+ 		});
+ 		request->check(Command::ChatSelf) && request->handle([=] {
+ 			_controller->showThread(
 diff --git a/Telegram/SourceFiles/settings/sections/settings_shortcuts.cpp b/Telegram/SourceFiles/settings/sections/settings_shortcuts.cpp
 index e742f70ec..c4b8b7414 100644
 --- a/Telegram/SourceFiles/settings/sections/settings_shortcuts.cpp
